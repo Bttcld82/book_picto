@@ -4,6 +4,49 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useDraggable, DndContext, DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import Navbar from '@/components/Navbar';
 import { pageApi, cardApi, assetApi, bookApi, patchCard, listPages, updateBook, Page, Card, Asset, Book } from '../../../../../../lib/api';
+import panel from "./panel.module.css";
+
+// Card normalization types for v4/v5 compatibility
+type CardRaw = {
+  id: number;
+  label: string;
+  image?: { url: string|null; alt: string|null } | null;
+  // shape v4
+  slot_row?: number; slot_col?: number; row_span?: number; col_span?: number; target_page_id?: number|null;
+  // shape v5
+  pos?: { row:number; col:number; row_span:number; col_span:number };
+  navigate_to?: number|null;
+  image_id?: number|null;
+};
+
+type CardUI = {
+  id: number;
+  label: string;
+  image?: { url: string|null; alt: string|null } | null;
+  pos: { row:number; col:number; row_span:number; col_span:number };
+  navigate_to: number|null;
+  image_id?: number|null;
+};
+
+type PageState = {
+  book_id: number;
+  page: { id:number; title:string; grid_cols:number; grid_rows:number };
+  cards: CardUI[];
+};
+
+function normalizeCard(c: CardRaw): CardUI {
+  const pos = c.pos
+    ? c.pos
+    : { row: c.slot_row ?? 1, col: c.slot_col ?? 1, row_span: c.row_span ?? 1, col_span: c.col_span ?? 1 };
+  return {
+    id: c.id,
+    label: c.label,
+    image: c.image ?? null,
+    pos,
+    navigate_to: (c.navigate_to ?? c.target_page_id ?? null),
+    image_id: c.image_id,
+  };
+}
 
 interface PageProps {
   params: {
@@ -18,6 +61,7 @@ export default function BuilderPage({ params }: PageProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [bookPages, setBookPages] = useState<Page[]>([]);
+  const [pages, setPages] = useState<{id:number; title:string}[]>([]);
   const [loading, setLoading] = useState(true);
 
   const selected = useMemo(
@@ -54,6 +98,21 @@ export default function BuilderPage({ params }: PageProps) {
       setSelectedId(null);
     }
   }, [cards, selectedId]);
+
+  // Load pages for Link Pagina dropdown
+  useEffect(() => {
+    let ok = true;
+    (async () => {
+      try {
+        const arr = await listPages(params.bookId);
+        if (!ok) return;
+        setPages(arr.map((p:any) => ({ id: p.id, title: p.title })));
+      } catch (e) {
+        console.error("listPages failed", e);
+      }
+    })();
+    return () => { ok = false; };
+  }, [params.bookId]);
 
   const handleCardClick = (row: number, col: number) => {
     const existingCard = cards.find(c => c.slot_row === row && c.slot_col === col);
@@ -100,22 +159,65 @@ export default function BuilderPage({ params }: PageProps) {
     }
   };
 
-  const onTargetChange = async (pageId: number | null) => {
+  // Fixed Link Pagina handler with robust string/number handling
+  async function onTargetChange(value: string) {
     if (!selected) return;
+    // "" => null, altrimenti numero
+    const pageId = value === "" ? null : Number(value);
+    // update ottimistico nello stato locale
+    setCards(cards.map(c => 
+      c.id === selected.id ? { ...c, target_page_id: pageId } : c
+    ));
+    // PATCH corretta al backend (campo atteso: target_page_id)
     try {
-      // update ottimistico
-      setCards(cards.map(c =>
-        c.id === selected.id ? { ...c, target_page_id: pageId } : c
-      ));
       await patchCard(selected.id, { target_page_id: pageId });
-    } catch (err) {
-      console.error('Error updating card target page:', err);
-      // revert on error
-      setCards(cards.map(c =>
-        c.id === selected.id ? { ...c, target_page_id: selected.target_page_id } : c
-      ));
+    } catch (e) {
+      console.error("patchCard target_page_id failed", e);
+      alert("Errore salvataggio link pagina");
     }
-  };
+  }
+
+  // Label change handler
+  async function onLabelChange(value: string) {
+    if (!selected) return;
+    // update ottimistico
+    setCards(cards.map(c => 
+      c.id === selected.id ? { ...c, label: value } : c
+    ));
+    try {
+      await patchCard(selected.id, { label: value });
+    } catch (e) {
+      console.error("patchCard label failed", e);
+    }
+  }
+
+  // Span update handler
+  async function updateSpan(type: 'row' | 'col', value: number) {
+    if (!selected) return;
+    const field = type === 'row' ? 'row_span' : 'col_span';
+    // update ottimistico
+    setCards(cards.map(c => 
+      c.id === selected.id ? { ...c, [field]: value } : c
+    ));
+    try {
+      await patchCard(selected.id, { [field]: value });
+    } catch (e) {
+      console.error(`patchCard ${field} failed`, e);
+    }
+  }
+
+  // Remove card handler
+  async function removeCard() {
+    if (!selected) return;
+    if (!confirm(`Elimina la card "${selected.label}"?`)) return;
+    try {
+      await cardApi.delete(selected.id);
+      setCards(cards.filter(c => c.id !== selected.id));
+      setSelectedId(null);
+    } catch (e) {
+      console.error("deleteCard failed", e);
+    }
+  }
 
   // helper per associare upload a una card specifica
   const onUploadFor = (cardId: number) => async (file: File) => {
@@ -431,62 +533,70 @@ export default function BuilderPage({ params }: PageProps) {
           </div>
         </div>
 
-      <div className="builder-panel">
-        <h3>Proprietà Card</h3>
-        {selected ? (
-          <div>
-            <div className="form-group">
-              <label>Etichetta:</label>
+      <aside className={panel.panel} aria-label="Proprietà Card">
+        <div className={panel.title}>Proprietà Card</div>
+
+        {!selected && (
+          <div className={panel.help}>
+            Seleziona una card nella griglia a sinistra per modificarne le proprietà.
+          </div>
+        )}
+
+        {selected && (
+          <form className={panel.form} onSubmit={(e) => e.preventDefault()}>
+            {/* Etichetta */}
+            <div className={panel.group}>
+              <label className={panel.label} htmlFor="label">Etichetta</label>
               <input
-                type="text"
-                value={selected.label}
-                onChange={(e) => updateCard({ label: e.target.value })}
+                id="label"
+                className={panel.input}
+                value={selected.label ?? ""}
+                onChange={(e) => onLabelChange(e.target.value)}
+                placeholder="Inserisci un titolo breve"
               />
+              <div className={panel.help}>Testo mostrato sotto l'immagine e pronunciato nel runtime.</div>
             </div>
-            
-            <div className="form-group">
-              <label>Link Pagina:</label>
+
+            {/* Link Pagina */}
+            <div className={panel.group}>
+              <label className={panel.label} htmlFor="link">Link Pagina</label>
               <select
-                value={selected.target_page_id || ""}
-                onChange={(e) => onTargetChange(e.target.value ? parseInt(e.target.value) : null)}
+                id="link"
+                className={panel.select}
+                value={selected.target_page_id != null ? String(selected.target_page_id) : ""}
+                onChange={(e) => onTargetChange(e.target.value)}
               >
                 <option value="">— Nessun link —</option>
-                {bookPages.map(p => (
-                  <option key={p.id} value={p.id}>{p.title}</option>
-                ))}
+                {pages.map(p => <option key={p.id} value={String(p.id)}>{p.title}</option>)}
               </select>
+              <div className={panel.help}>Se impostato, la card aprirà la pagina scelta.</div>
             </div>
-            
-            <div className="form-group">
-              <label>Row Span:</label>
-              <input
-                type="number"
-                min="1"
-                max={page.grid_rows}
-                value={selected.row_span}
-                onChange={(e) => updateCard({ row_span: parseInt(e.target.value) })}
-              />
+
+            {/* Span */}
+            <div className={`${panel.group} ${panel.inline}`}>
+              <div>
+                <label className={panel.label} htmlFor="rowspan">Row Span</label>
+                <input id="rowspan" className={panel.input}
+                       value={selected.row_span}
+                       onChange={(e) => updateSpan('row', Number(e.target.value) || 1)} />
+              </div>
+              <div>
+                <label className={panel.label} htmlFor="colspan">Col Span</label>
+                <input id="colspan" className={panel.input}
+                       value={selected.col_span}
+                       onChange={(e) => updateSpan('col', Number(e.target.value) || 1)} />
+              </div>
             </div>
-            
-            <div className="form-group">
-              <label>Col Span:</label>
-              <input
-                type="number"
-                min="1"
-                max={page.grid_cols}
-                value={selected.col_span}
-                onChange={(e) => updateCard({ col_span: parseInt(e.target.value) })}
-              />
+
+            {/* Azioni */}
+            <div className={panel.actions}>
+              <button type="button" className={`${panel.btn} ${panel.danger}`} onClick={removeCard}>
+                Elimina Card
+              </button>
             </div>
-            
-            <button className="btn btn-danger" onClick={deleteCard}>
-              Elimina Card
-            </button>
-          </div>
-        ) : (
-          <p>Seleziona una card per modificarla</p>
+          </form>
         )}
-      </div>
+      </aside>
     </DndContext>
       </main>
     </>
