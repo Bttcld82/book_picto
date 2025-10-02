@@ -40,6 +40,7 @@ def get_runtime_page(book_id: int, page_id: int, db: Session = Depends(get_db)):
             "row_span": card.row_span,
             "col_span": card.col_span,
             "label": card.label,
+            "target_page_id": card.target_page_id,  # ✅ Aggiunto per compatibilità frontend
             "image": None,
             "target_page": None
         }

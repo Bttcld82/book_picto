@@ -26,6 +26,7 @@ class CardRead(CardBase):
     id: int
     image_id: Optional[int] = None
     target_page_id: Optional[int] = None
+    target_page_title: Optional[str] = None
 
     class Config:
         from_attributes = True

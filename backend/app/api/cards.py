@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List
 from ..db import SessionLocal
 from ..models.card import Card
+from ..models.page import Page
 from ..schemas.card import CardCreate, CardUpdate, CardRead
 
 router = APIRouter()
@@ -33,10 +35,43 @@ def check_card_overlap(db: Session, page_id: int, slot_row: int, slot_col: int, 
 
 @router.get("/", response_model=List[CardRead])
 def list_cards(page_id: int = None, db: Session = Depends(get_db)):
-    query = db.query(Card)
+    # Query with LEFT JOIN to get target_page_title
+    query = db.query(
+        Card.id,
+        Card.page_id,
+        Card.slot_row,
+        Card.slot_col,
+        Card.row_span,
+        Card.col_span,
+        Card.label,
+        Card.image_id,
+        Card.target_page_id,
+        Page.title.label("target_page_title")
+    ).outerjoin(Page, Card.target_page_id == Page.id)
+    
     if page_id:
         query = query.filter(Card.page_id == page_id)
-    return query.all()
+    
+    results = query.all()
+    
+    # Convert to CardRead objects
+    cards = []
+    for result in results:
+        card_dict = {
+            "id": result.id,
+            "page_id": result.page_id,
+            "slot_row": result.slot_row,
+            "slot_col": result.slot_col,
+            "row_span": result.row_span,
+            "col_span": result.col_span,
+            "label": result.label,
+            "image_id": result.image_id,
+            "target_page_id": result.target_page_id,
+            "target_page_title": result.target_page_title
+        }
+        cards.append(CardRead(**card_dict))
+    
+    return cards
 
 @router.post("/", response_model=CardRead)
 def create_card(card: CardCreate, db: Session = Depends(get_db)):
@@ -48,14 +83,69 @@ def create_card(card: CardCreate, db: Session = Depends(get_db)):
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
-    return db_card
+    
+    # Get target_page_title for response
+    result = db.query(
+        Card.id,
+        Card.page_id,
+        Card.slot_row,
+        Card.slot_col,
+        Card.row_span,
+        Card.col_span,
+        Card.label,
+        Card.image_id,
+        Card.target_page_id,
+        Page.title.label("target_page_title")
+    ).outerjoin(Page, Card.target_page_id == Page.id).filter(Card.id == db_card.id).first()
+    
+    card_dict = {
+        "id": result.id,
+        "page_id": result.page_id,
+        "slot_row": result.slot_row,
+        "slot_col": result.slot_col,
+        "row_span": result.row_span,
+        "col_span": result.col_span,
+        "label": result.label,
+        "image_id": result.image_id,
+        "target_page_id": result.target_page_id,
+        "target_page_title": result.target_page_title
+    }
+    
+    return CardRead(**card_dict)
 
 @router.get("/{card_id}", response_model=CardRead)
 def get_card(card_id: int, db: Session = Depends(get_db)):
-    card = db.query(Card).filter(Card.id == card_id).first()
-    if not card:
+    # Query with LEFT JOIN to get target_page_title
+    result = db.query(
+        Card.id,
+        Card.page_id,
+        Card.slot_row,
+        Card.slot_col,
+        Card.row_span,
+        Card.col_span,
+        Card.label,
+        Card.image_id,
+        Card.target_page_id,
+        Page.title.label("target_page_title")
+    ).outerjoin(Page, Card.target_page_id == Page.id).filter(Card.id == card_id).first()
+    
+    if not result:
         raise HTTPException(status_code=404, detail="Card not found")
-    return card
+    
+    card_dict = {
+        "id": result.id,
+        "page_id": result.page_id,
+        "slot_row": result.slot_row,
+        "slot_col": result.slot_col,
+        "row_span": result.row_span,
+        "col_span": result.col_span,
+        "label": result.label,
+        "image_id": result.image_id,
+        "target_page_id": result.target_page_id,
+        "target_page_title": result.target_page_title
+    }
+    
+    return CardRead(**card_dict)
 
 @router.patch("/{card_id}", response_model=CardRead)
 def update_card(card_id: int, card_update: CardUpdate, db: Session = Depends(get_db)):
@@ -80,7 +170,35 @@ def update_card(card_id: int, card_update: CardUpdate, db: Session = Depends(get
     
     db.commit()
     db.refresh(card)
-    return card
+    
+    # Get target_page_title for response
+    result = db.query(
+        Card.id,
+        Card.page_id,
+        Card.slot_row,
+        Card.slot_col,
+        Card.row_span,
+        Card.col_span,
+        Card.label,
+        Card.image_id,
+        Card.target_page_id,
+        Page.title.label("target_page_title")
+    ).outerjoin(Page, Card.target_page_id == Page.id).filter(Card.id == card.id).first()
+    
+    card_dict = {
+        "id": result.id,
+        "page_id": result.page_id,
+        "slot_row": result.slot_row,
+        "slot_col": result.slot_col,
+        "row_span": result.row_span,
+        "col_span": result.col_span,
+        "label": result.label,
+        "image_id": result.image_id,
+        "target_page_id": result.target_page_id,
+        "target_page_title": result.target_page_title
+    }
+    
+    return CardRead(**card_dict)
 
 @router.delete("/{card_id}")
 def delete_card(card_id: int, db: Session = Depends(get_db)):

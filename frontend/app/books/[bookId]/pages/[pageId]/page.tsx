@@ -4,111 +4,115 @@ import { useEffect, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
 import styles from "./runtime.module.css";
 
-type RuntimeCardV1 = {
-  id: number; label: string;
-  image?: { url: string|null; alt: string|null };
-  pos: { row: number; col: number; row_span: number; col_span: number };
-  navigate_to?: number|null;
-};
-type RuntimeCardV0 = {
-  id: number; label: string;
-  image?: { url: string|null; alt: string|null };
-  slot_row: number; slot_col: number; row_span: number; col_span: number;
-  target_page_id?: number|null;
-};
-type RuntimePayload = {
-  book_id?: number;
-  book?: { id:number; title:string; locale:string; home_page_id?:number }|null;
-  page: { id:number; title:string; grid_cols:number; grid_rows:number };
-  cards: Array<RuntimeCardV1 | RuntimeCardV0>;
-};
-type BookRead = { id:number; title:string; locale:string; home_page_id?:number|null };
-
 const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+const TOGGLE_KEY = "aac:linkButton:visible"; // localStorage map { cardId: true|false }
 
-function speak(text: string, locale?: string) {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+type CardRaw = any;
+type CardUI = {
+  id: number;
+  label: string;
+  image?: { url: string | null; alt: string | null } | null;
+  pos: { row: number; col: number; row_span: number; col_span: number };
+  navigate_to: number | null;
+  target_page_title?: string | null;
+};
+
+function readToggle(): Record<string, boolean> {
   try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 0.9; u.pitch = 1; u.volume = 1;
-    if (locale) u.lang = locale;
-    speechSynthesis.speak(u);
-  } catch {}
+    return JSON.parse(localStorage.getItem(TOGGLE_KEY) || "{}");
+  } catch {
+    return {};
+  }
 }
 
 export default function Page({ params }: { params: { bookId: string; pageId: string } }) {
-  const [data, setData] = useState<RuntimePayload | null>(null);
-  const [book, setBook] = useState<BookRead | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [data, setData] = useState<any>(null);
+  const [book, setBook] = useState<any>(null);
+  const [pageTitles, setPageTitles] = useState<Record<number, string>>({});
+  const [btnMap, setBtnMap] = useState<Record<string, boolean>>({});
 
+  // toggle da localStorage
   useEffect(() => {
-    let ok = true;
-    setLoading(true); setErr(null);
-
-    const fetchAll = async () => {
-      try {
-        const [r1, r2] = await Promise.all([
-          fetch(`${API}/api/runtime/books/${params.bookId}/pages/${params.pageId}`, { cache: "no-store" }),
-          fetch(`${API}/api/books/${params.bookId}`, { cache: "no-store" }),
-        ]);
-        if (!r1.ok) throw new Error(`runtime ${r1.status}`);
-        if (!r2.ok) throw new Error(`book ${r2.status}`);
-        const runtimeData = await r1.json() as RuntimePayload;
-        const bookData = await r2.json() as BookRead;
-        if (!ok) return;
-        setData(runtimeData);
-        setBook(bookData);
-        setLoading(false);
-      } catch (e:any) {
-        if (!ok) return;
-        setErr(e?.message || "Errore caricamento");
-        setLoading(false);
-      }
+    setBtnMap(readToggle());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === TOGGLE_KEY) setBtnMap(readToggle());
     };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
-    fetchAll();
-    return () => { ok = false; };
+  // carica runtime e book
+  useEffect(() => {
+    (async () => {
+      const [r1, r2] = await Promise.all([
+        fetch(`${API}/api/runtime/books/${params.bookId}/pages/${params.pageId}`, { cache: "no-store" }),
+        fetch(`${API}/api/books/${params.bookId}`, { cache: "no-store" }),
+      ]);
+      if (r1.ok) setData(await r1.json());
+      if (r2.ok) setBook(await r2.json());
+    })();
   }, [params.bookId, params.pageId]);
 
-  const homeId = useMemo(() => {
-    if (book?.home_page_id) return book.home_page_id;
-    if (data?.page?.id) return data.page.id;
-    return 1;
-  }, [book, data]);
-
-  const normCards: RuntimeCardV1[] = useMemo(() => {
+  // normalizza cards
+  const normCards: CardUI[] = useMemo(() => {
     if (!data) return [];
-    return data.cards.map((c: any) => {
-      const isV1 = !!c.pos;
-      return {
-        id: c.id,
-        label: c.label,
-        image: c.image ?? { url: null, alt: null },
-        pos: isV1
-          ? c.pos
-          : { row: c.slot_row, col: c.slot_col, row_span: c.row_span, col_span: c.col_span },
-        navigate_to: isV1 ? (c.navigate_to ?? null) : (c.target_page_id ?? null),
-      } as RuntimeCardV1;
-    });
+    return (data.cards as CardRaw[]).map((c) => ({
+      id: c.id,
+      label: c.label,
+      image: c.image ?? null,
+      pos: c.pos
+        ? c.pos
+        : { row: c.slot_row, col: c.slot_col, row_span: c.row_span, col_span: c.col_span },
+      navigate_to: c.navigate_to ?? c.target_page_id ?? null, // 👈 normalizzazione
+      target_page_title: c.target_page_title ?? null,
+    }));
   }, [data]);
 
-  if (loading) return <main className={styles?.container || "container"}>Caricamento</main>;
-  if (err || !data || !book) return <main className={styles?.container || "container"}>Errore: {err || "dati non disponibili"}</main>;
+  // fetch titoli pagine se servono
+  useEffect(() => {
+    (async () => {
+      if (!book) return;
+      const need = normCards
+        .filter((c) => c.navigate_to && !c.target_page_title)
+        .map((c) => c.navigate_to!) as number[];
+      if (need.length === 0) return;
+      const resp = await fetch(`${API}/api/pages?book_id=${book.id}`, { cache: "no-store" });
+      if (!resp.ok) return;
+      const pages = await resp.json();
+      const m: Record<number, string> = {};
+      for (const p of pages) m[p.id] = p.title;
+      setPageTitles(m);
+    })();
+  }, [book, normCards]);
+
+  if (!data || !book) return <main className={styles?.container || "container"}>Caricamento…</main>;
+
+  const speak = (text: string, locale?: string) => {
+    try {
+      if ("speechSynthesis" in window) {
+        speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.rate = 0.9;
+        if (locale) utter.lang = locale;
+        speechSynthesis.speak(utter);
+      }
+    } catch (e) {
+      console.warn("TTS non disponibile", e);
+    }
+  };
 
   return (
     <>
       <Navbar
         brand={book.title || "Il mio comunicatore"}
-        brandHref={`/books/${book.id}/pages/${homeId}`}
+        brandHref={`/books/${params.bookId}/pages/${book.home_page_id ?? data.page.id}`}
         nav={[
-          { label: "Runtime", href: `/books/${book.id}/pages/${homeId}` },
-          { label: "Builder", href: `/builder/books/${book.id}/pages/${data.page.id}` },
+          { label: "Runtime", href: `/books/${params.bookId}/pages/${book.home_page_id ?? data.page.id}` },
+          { label: "Builder", href: `/builder/books/${params.bookId}/pages/${data.page.id}` },
         ]}
         breadcrumbs={[
-          { label: "Home", href: `/books/${book.id}/pages/${homeId}` },
-          { label: data.page.title }
+          { label: "Home", href: `/books/${params.bookId}/pages/${book.home_page_id ?? data.page.id}` },
+          { label: data.page.title },
         ]}
       />
 
@@ -120,32 +124,21 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
           {normCards.map((c) => {
             const targetId = c.navigate_to ?? data.page.id;
             const href = `/books/${book.id}/pages/${targetId}`;
-            const isSame = targetId === data.page.id; // evita "niente navigazione" su stessa pagina
+            const toggle = btnMap[String(c.id)];
+            const showBtn = !!c.navigate_to && (toggle === undefined ? true : !!toggle);
+            const btnLabel = c.target_page_title || pageTitles[targetId] || "Apri";
 
             return (
-              <a
+              <div
                 key={c.id}
-                href={href}
                 className={styles.card}
-                // Avvia la voce PRIMA della navigazione, senza bloccarla
                 onPointerDown={() => speak(c.label, book.locale)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") speak(c.label, book.locale);
-                }}
-                // opzionale: se vuoi forzare navigazione anche quando è stessa pagina, ricarica
-                onClick={(e) => {
-                  if (isSame) {
-                    // forza il "refresh" della pagina corrente con pronuncia
-                    e.preventDefault();
-                    speak(c.label, book.locale);
-                    window.location.href = href;
-                  }
-                }}
                 style={{
                   gridRow: `${c.pos.row} / span ${c.pos.row_span}`,
                   gridColumn: `${c.pos.col} / span ${c.pos.col_span}`,
+                  position: "relative",
                 }}
-                aria-label={`Pronuncia e apri: ${c.label}`}
+                aria-label={`Pronuncia: ${c.label}`}
               >
                 <div className={styles.mediaWrap}>
                   {c.image?.url ? (
@@ -154,10 +147,36 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
                     <span aria-hidden>🖼️</span>
                   )}
                 </div>
+
                 <div className={styles.cardLabel}>
-                  {c.label} <span aria-hidden>🔊</span>
+                  {c.label} <span className={styles.speakerIcon} aria-hidden>🔊</span>
                 </div>
-              </a>
+
+                {showBtn && (
+                  <a
+                    href={href}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Vai a ${btnLabel}`}
+                    style={{
+                      position: "absolute",
+                      right: 10,
+                      bottom: 10,
+                      zIndex: 5,
+                      padding: "6px 12px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(110,168,254,.35)",
+                      background:
+                        "linear-gradient(180deg, rgba(110,168,254,.18), rgba(110,168,254,.10))",
+                      color: "#fff",
+                      textDecoration: "none",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {btnLabel}
+                  </a>
+                )}
+              </div>
             );
           })}
         </div>

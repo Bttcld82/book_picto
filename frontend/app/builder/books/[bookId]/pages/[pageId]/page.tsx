@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useDraggable, DndContext, DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import Navbar from '@/components/Navbar';
 import { pageApi, cardApi, assetApi, bookApi, patchCard, listPages, updateBook, Page, Card, Asset, Book } from '../../../../../../lib/api';
+import { isLinkButtonVisible, setLinkButtonVisible } from '../../../../../../lib/linkButtonPref';
 import panel from "./panel.module.css";
 
 // Card normalization types for v4/v5 compatibility
@@ -60,6 +61,24 @@ export default function BuilderPage({ params }: PageProps) {
   const [book, setBook] = useState<Book | null>(null);
   const [cards, setCards] = useState<Card[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [linkBtnMapBump, setLinkBtnMapBump] = useState(0); // forza re-render
+  
+  function toggleLinkBtn(cardId: number, val: boolean) {
+    const TOGGLE_KEY = "aac:linkButton:visible";
+    try {
+      const current = JSON.parse(localStorage.getItem(TOGGLE_KEY) || "{}");
+      current[String(cardId)] = val;
+      localStorage.setItem(TOGGLE_KEY, JSON.stringify(current));
+      // Dispatch storage event per sincronizzazione
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: TOGGLE_KEY,
+        newValue: JSON.stringify(current)
+      }));
+    } catch (e) {
+      console.error('Error saving toggle state:', e);
+    }
+    setLinkBtnMapBump(x => x + 1);     // forza re-render del pannello/card
+  }
   const [bookPages, setBookPages] = useState<Page[]>([]);
   const [pages, setPages] = useState<{id:number; title:string}[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,7 +265,8 @@ export default function BuilderPage({ params }: PageProps) {
 
   // Componente DraggableCard con handle e selezione
   function DraggableCard({
-    id, label, imageUrl, selected, onSelect, gridPos, onUploadFile, navigateTo
+    id, label, imageUrl, selected, onSelect, gridPos, onUploadFile, navigateTo,
+    showLinkButton, pageTitleMap
   }: {
     id: number;
     label: string;
@@ -255,7 +275,9 @@ export default function BuilderPage({ params }: PageProps) {
     onSelect: () => void;
     gridPos: any;
     onUploadFile?: (f: File) => Promise<void>;
-    navigateTo?: number;
+    navigateTo?: number|null;
+    showLinkButton?: boolean;
+    pageTitleMap?: Record<number,string>;
   }) {
     const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
     const fileRef = useRef<HTMLInputElement | null>(null);
@@ -357,6 +379,30 @@ export default function BuilderPage({ params }: PageProps) {
 
         {/* LABEL */}
         <div style={{ fontSize: 16, fontWeight: 600, textAlign:"center" }}>{label}</div>
+        
+        {/* Bottone link nella card del Builder */}
+        {showLinkButton && navigateTo && (
+          <a
+            href={`/builder/books/${params.bookId}/pages/${navigateTo}`}
+            onClick={(e) => e.stopPropagation()}     // non interferisce con select/drag
+            title={`Vai a ${pageTitleMap?.[navigateTo] ?? "pagina"}`}
+            style={{
+              position: "absolute",
+              right: 8, bottom: 8,
+              zIndex: 20,
+              padding: "6px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(110,168,254,.35)",
+              background: "linear-gradient(180deg, rgba(110,168,254,.18), rgba(110,168,254,.10))",
+              color: "#fff",
+              textDecoration: "none",
+              fontWeight: 700,
+              cursor: "pointer"
+            }}
+          >
+            {pageTitleMap?.[navigateTo] ?? "Apri"}
+          </a>
+        )}
       </div>
     );
   }
@@ -452,7 +498,9 @@ export default function BuilderPage({ params }: PageProps) {
           selected={selectedId === card.id}
           onSelect={() => setSelectedId(card.id)}
           onUploadFile={onUploadFor(card.id)}
-          navigateTo={card.target_page_id ?? undefined}
+          navigateTo={card.target_page_id ?? null}
+          showLinkButton={isLinkButtonVisible(card.id)}   // legge il toggle da localStorage
+          pageTitleMap={pages.reduce((m,p)=> (m[p.id]=p.title, m), {} as Record<number,string>)}
           gridPos={{
             gridColumn: `${card.slot_col + 1} / span ${card.col_span}`,
             gridRow: `${card.slot_row + 1} / span ${card.row_span}`
@@ -571,6 +619,28 @@ export default function BuilderPage({ params }: PageProps) {
               </select>
               <div className={panel.help}>Se impostato, la card aprirà la pagina scelta.</div>
             </div>
+
+            {/* Mostra bottone link */}
+            {selected.target_page_id && (
+              <div className={panel.group}>
+                <label className={panel.label} htmlFor="showbtn">Mostra bottone link</label>
+                <input
+                  id="showbtn"
+                  type="checkbox"
+                  checked={(() => {
+                    try {
+                      const stored = localStorage.getItem("aac:linkButton:visible");
+                      const map = stored ? JSON.parse(stored) : {};
+                      return map[String(selected.id)] ?? false;
+                    } catch {
+                      return false;
+                    }
+                  })()}
+                  onChange={(e) => toggleLinkBtn(selected.id, e.target.checked)}
+                />
+                <div className={panel.help}>Mostra in card un bottone con il titolo della pagina collegata.</div>
+              </div>
+            )}
 
             {/* Span */}
             <div className={`${panel.group} ${panel.inline}`}>
