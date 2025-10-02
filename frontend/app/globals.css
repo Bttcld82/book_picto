@@ -1,0 +1,42 @@
+/* Reset minimale e design tokens */
+:root{
+  --bg: #0b0b10;
+  --surface: #0f1115;
+  --card: #151821;
+  --text: #e8e9ec;
+  --muted: #a7adbb;
+  --accent: #6ea8fe;
+  --accent-2: #9b8cff;
+  --ring: rgba(110,168,254,.45);
+  --radius: 16px;
+  --shadow: 0 10px 30px rgba(0,0,0,.35);
+  --shadow-sm: 0 6px 16px rgba(0,0,0,.25);
+  
+  /* Navbar variables */
+  --nav-h: 64px;
+  --nav-bg: #0f1115cc;      /* semi-transparent */
+  --nav-border: #1f2430;
+  --nav-text: #e8e9ec;
+  --nav-muted: #a7adbb;
+  --nav-accent: #6ea8fe;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  background: radial-gradient(1200px 800px at 20% -10%, #121523 0%, var(--bg) 50%, #0a0b0e 100%);
+  color: var(--text); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+}
+
+/* layout safe-area for fixed navbar */
+body.has-fixed-nav {
+  padding-top: var(--nav-h);
+}
+
+a{color:inherit}
+
+/* utility */
+.container {
+  max-width: 1200px; margin: 0 auto; padding: 0 16px;
+}
