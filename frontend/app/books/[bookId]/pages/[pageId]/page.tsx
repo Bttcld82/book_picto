@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import styles from "./runtime.module.css";
 
@@ -39,7 +38,6 @@ function speak(text: string, locale?: string) {
 }
 
 export default function Page({ params }: { params: { bookId: string; pageId: string } }) {
-  const router = useRouter();
   const [data, setData] = useState<RuntimePayload | null>(null);
   const [book, setBook] = useState<BookRead | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,12 +97,6 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
   if (loading) return <main className={styles?.container || "container"}>Caricamento</main>;
   if (err || !data || !book) return <main className={styles?.container || "container"}>Errore: {err || "dati non disponibili"}</main>;
 
-  const goTo = (targetPageId: number | null | undefined, label: string) => {
-    speak(label, book.locale);
-    const next = targetPageId ?? data.page.id;
-    router.push(`/books/${book.id}/pages/${next}`);
-  };
-
   return (
     <>
       <Navbar
@@ -125,29 +117,49 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
           className={styles.grid}
           style={{ gridTemplateColumns: `repeat(${data.page.grid_cols}, minmax(0, 1fr))` }}
         >
-          {normCards.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => goTo(c.navigate_to, c.label)}
-              className={styles.card}
-              style={{
-                gridRow: `${c.pos.row} / span ${c.pos.row_span}`,
-                gridColumn: `${c.pos.col} / span ${c.pos.col_span}`,
-              }}
-              aria-label={`Pronuncia: ${c.label}`}
-            >
-              <div className={styles.mediaWrap}>
-                {c.image?.url ? (
-                  <img src={`${API}${c.image.url}`} alt={c.image.alt ?? c.label} />
-                ) : (
-                  <span aria-hidden></span>
-                )}
-              </div>
-              <div className={styles.cardLabel}>
-                {c.label} <span aria-hidden></span>
-              </div>
-            </button>
-          ))}
+          {normCards.map((c) => {
+            const targetId = c.navigate_to ?? data.page.id;
+            const href = `/books/${book.id}/pages/${targetId}`;
+            const isSame = targetId === data.page.id; // evita "niente navigazione" su stessa pagina
+
+            return (
+              <a
+                key={c.id}
+                href={href}
+                className={styles.card}
+                // Avvia la voce PRIMA della navigazione, senza bloccarla
+                onPointerDown={() => speak(c.label, book.locale)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") speak(c.label, book.locale);
+                }}
+                // opzionale: se vuoi forzare navigazione anche quando è stessa pagina, ricarica
+                onClick={(e) => {
+                  if (isSame) {
+                    // forza il "refresh" della pagina corrente con pronuncia
+                    e.preventDefault();
+                    speak(c.label, book.locale);
+                    window.location.href = href;
+                  }
+                }}
+                style={{
+                  gridRow: `${c.pos.row} / span ${c.pos.row_span}`,
+                  gridColumn: `${c.pos.col} / span ${c.pos.col_span}`,
+                }}
+                aria-label={`Pronuncia e apri: ${c.label}`}
+              >
+                <div className={styles.mediaWrap}>
+                  {c.image?.url ? (
+                    <img src={`${API}${c.image.url}`} alt={c.image.alt ?? c.label} />
+                  ) : (
+                    <span aria-hidden>🖼️</span>
+                  )}
+                </div>
+                <div className={styles.cardLabel}>
+                  {c.label} <span aria-hidden>🔊</span>
+                </div>
+              </a>
+            );
+          })}
         </div>
       </main>
     </>
