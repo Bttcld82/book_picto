@@ -30,6 +30,18 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
   const [book, setBook] = useState<any>(null);
   const [pageTitles, setPageTitles] = useState<Record<number, string>>({});
   const [btnMap, setBtnMap] = useState<Record<string, boolean>>({});
+  const [audioInitialized, setAudioInitialized] = useState(false);
+
+  // Inizializza audio per iOS al primo tocco
+  const initializeAudio = () => {
+    if (!audioInitialized && "speechSynthesis" in window) {
+      // Su iOS, pronuncia un testo vuoto per "sbloccare" l'audio
+      const utterance = new SpeechSynthesisUtterance("");
+      utterance.volume = 0;
+      speechSynthesis.speak(utterance);
+      setAudioInitialized(true);
+    }
+  };
 
   // toggle da localStorage
   useEffect(() => {
@@ -87,13 +99,38 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
 
   if (!data || !book) return <main className={styles?.container || "container"}>Caricamento…</main>;
 
-  const speak = (text: string, locale?: string) => {
+  const speak = async (text: string, locale?: string) => {
     try {
       if ("speechSynthesis" in window) {
         speechSynthesis.cancel();
+        
+        // iOS fix: assicurati che ci siano voci disponibili
+        let voices = speechSynthesis.getVoices();
+        if (voices.length === 0) {
+          // Su iOS le voci potrebbero non essere immediatamente disponibili
+          await new Promise(resolve => {
+            speechSynthesis.onvoiceschanged = resolve;
+            setTimeout(resolve, 100); // fallback timeout
+          });
+          voices = speechSynthesis.getVoices();
+        }
+        
         const utter = new SpeechSynthesisUtterance(text);
         utter.rate = 0.9;
-        if (locale) utter.lang = locale;
+        utter.volume = 1.0; // Volume massimo per iOS
+        
+        if (locale) {
+          utter.lang = locale;
+          // Trova una voce specifica per la lingua se disponibile
+          const voice = voices.find(v => v.lang.startsWith(locale.split('-')[0]));
+          if (voice) utter.voice = voice;
+        }
+        
+        // iOS fix: riattiva speechSynthesis se è in stato "paused"
+        if (speechSynthesis.paused) {
+          speechSynthesis.resume();
+        }
+        
         speechSynthesis.speak(utter);
       }
     } catch (e) {
@@ -132,13 +169,21 @@ export default function Page({ params }: { params: { bookId: string; pageId: str
               <div
                 key={c.id}
                 className={styles.card}
-                onPointerDown={() => speak(c.label, book.locale)}
+                onClick={() => {
+                  initializeAudio();
+                  speak(c.label, book.locale);
+                }}
+                onTouchStart={() => {}} // iOS: assicura che il touch sia riconosciuto
                 style={{
                   gridRow: `${c.pos.row} / span ${c.pos.row_span}`,
                   gridColumn: `${c.pos.col} / span ${c.pos.col_span}`,
                   position: "relative",
+                  cursor: "pointer",
+                  touchAction: "manipulation", // iOS: previene zoom su double-tap
                 }}
                 aria-label={`Pronuncia: ${c.label}`}
+                role="button"
+                tabIndex={0}
               >
                 <div className={styles.mediaWrap}>
                   {c.image?.url ? (

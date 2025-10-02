@@ -6,7 +6,7 @@ services:
     environment:
       - APP_ENV=dev
       - DB_URL=sqlite:///./data.db
-      - CORS_ORIGINS=http://localhost:3000
+      - CORS_ORIGINS=http://localhost:3000,http://192.168.1.18:3000
     volumes:
       - ./backend:/app
     ports:
@@ -17,10 +17,10 @@ services:
       context: ./frontend
       dockerfile: ../docker/frontend.Dockerfile
     environment:
-      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+      - NEXT_PUBLIC_API_BASE=http://192.168.1.18:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules           # FIX: preserva le deps nel container
     ports:
       - "3000:3000"
-    command: npm run dev
+    command: npm run dev -- --hostname 0.0.0.0
